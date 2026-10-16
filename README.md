@@ -36,6 +36,25 @@ After the first run it works fully offline (except the optional Groq fallback).
    - Restart the terminal, then choose Groq in the sidebar.
    - Free-tier file limit is 25 MB. Our 3-5 second clips are far below that.
 
+## User interface
+
+- Top-down 2D floor plan (the main element): kitchen, bathroom and
+  bedroom side by side, front door in the kitchen's north wall, window
+  in the bedroom's east wall. Lit rooms glow warm yellow; the oven
+  shows heat waves, the water heater a pilot dot, the air conditioner
+  airflow dashes; the door leaf swings open/closed with a padlock
+  indicator; window panes slide apart when open.
+- The drawing is rebuilt from the SmartHome state after every command
+  (`floorplan.py` returns an SVG string shown with `st.image`), so it
+  can never disagree with the actual state. Rejected commands leave
+  the picture unchanged.
+- Event monitor below the plan: newest first, max 30 entries, each
+  with time, transcript, piece, intent, target, confidence and one of
+  SUCCESS / ALREADY IN STATE / REJECTED / UNKNOWN COMMAND.
+- Sidebar keeps engine choice, threshold display, accuracy checks
+  (groups a-d), setup help and the session-only voice log
+  (Correct/Wrong buttons, nothing written to disk).
+
 ## Test order
 
 Typed commands first (no mic needed), then voice (see app sidebar help).

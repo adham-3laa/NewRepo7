@@ -6,6 +6,7 @@ import tempfile
 import streamlit as st
 
 from command_parser import CONFIDENCE_THRESHOLD, evaluate_with_rules
+from floorplan import write_floorplan
 from home import SmartHome
 from intent_model import evaluate_accuracy, evaluate_single_v2, load_or_train
 from multi_command import (
@@ -52,6 +53,38 @@ def init_state():
         st.session_state.history = []
     if "last_result" not in st.session_state:
         st.session_state.last_result = None
+    if "events" not in st.session_state:
+        # Chronological individual action outcomes, newest last.
+        # Added without touching home/history/voice_log.
+        st.session_state.events = []
+
+
+def intent_target(intent):
+    """Presentation-only (room/device, action) pair for an intent."""
+    table = {
+        "kitchen_light_on": ("Kitchen", "light on"),
+        "kitchen_light_off": ("Kitchen", "light off"),
+        "bathroom_light_on": ("Bathroom", "light on"),
+        "bathroom_light_off": ("Bathroom", "light off"),
+        "bedroom_light_on": ("Bedroom", "light on"),
+        "bedroom_light_off": ("Bedroom", "light off"),
+        "kitchen_device_on": ("Kitchen oven", "turn on"),
+        "kitchen_device_off": ("Kitchen oven", "turn off"),
+        "bathroom_device_on": ("Water heater", "turn on"),
+        "bathroom_device_off": ("Water heater", "turn off"),
+        "bedroom_device_on": ("Air conditioner", "turn on"),
+        "bedroom_device_off": ("Air conditioner", "turn off"),
+        "door_open": ("Front door", "open"),
+        "door_close": ("Front door", "close"),
+        "door_lock": ("Front door", "lock"),
+        "door_unlock": ("Front door", "unlock"),
+        "window_open": ("Window", "open"),
+        "window_close": ("Window", "close"),
+        "all_lights_off": ("All lights", "turn off"),
+        "everything_off": ("Everything", "turn off"),
+        "status": ("House", "status"),
+    }
+    return table.get(intent, ("-", "-"))
 
 
 def handle_text(text, model, kind="typed"):
@@ -78,6 +111,29 @@ def handle_text(text, model, kind="typed"):
         ", ".join("%d %s" % (n, tag) for tag, n in sorted(counts.items())))
     st.session_state.history.append((parsed["transcript"], summary))
     st.session_state.history = st.session_state.history[-10:]
+    append_events(parsed["transcript"], outcomes)
+
+
+def append_events(transcript, outcomes):
+    """Record one event per action outcome, exactly once per command.
+
+    Called only from handle_text (the execution point), never from
+    rendering, so reruns cannot duplicate events. Keeps the latest 30.
+    """
+    import datetime
+    stamp = datetime.datetime.now().strftime("%H:%M:%S")
+    status_of = {"success": "SUCCESS", "already done": "ALREADY IN STATE",
+                 "refused": "REJECTED", "not understood": "UNKNOWN COMMAND"}
+    for outcome in outcomes:
+        target_room, target_action = intent_target(outcome["intent"])
+        st.session_state.events.append({
+            "time": stamp, "transcript": transcript,
+            "piece": outcome["piece"], "intent": outcome["intent"],
+            "target": "%s - %s" % (target_room, target_action),
+            "confidence": outcome["confidence"],
+            "source": outcome["source"], "message": outcome["message"],
+            "status": status_of.get(outcome["tag"], outcome["tag"])})
+    st.session_state.events = st.session_state.events[-30:]
 
 
 _TAG_ICONS = {"success": "\u2705", "already done": "\u26aa",
@@ -167,24 +223,34 @@ def render_accuracy(model):
 
 
 def render_house(home):
-    """Show door, window and three room cards with icons and colors."""
-    door_icon = "🚪 OPEN" if home.door_open else "🚪 CLOSED"
-    lock_icon = "🔒 LOCKED" if home.door_locked else "🔓 UNLOCKED"
-    window_icon = "🪟 OPEN" if home.window_open else "🪟 CLOSED"
-    st.subheader("House overview")
-    col_a, col_b = st.columns(2)
-    col_a.metric("Front door", "%s (%s)" % (door_icon, lock_icon))
-    col_b.metric("Window", window_icon)
+    """Draw the top-down floor plan from the SmartHome booleans."""
+    on_count = sum(home.lights.values()) + sum(home.devices.values())
+    if on_count == 0:
+        overall = "ALL OFF"
+    else:
+        overall = "%d device(s) ON" % on_count
+    st.subheader("House overview - %s" % overall)
+    st.image(write_floorplan(home), use_container_width=True)
 
-    cards = st.columns(3)
-    for column, room in zip(cards, ("kitchen", "bathroom", "bedroom")):
-        light = "💡 ON" if home.lights[room] else "⚫ OFF"
-        device_name = SmartHome.DEVICE_NAMES[room]
-        device = "🟢 ON" if home.devices[room] else "⚫ OFF"
-        border = "🟢" if (home.lights[room] or home.devices[room]) else "⚪"
-        column.markdown("**%s %s**" % (border, room.title()))
-        column.write("Light: %s" % light)
-        column.write("%s: %s" % (device_name.title(), device))
+
+_STATUS_ICONS = {"SUCCESS": "\u2705", "ALREADY IN STATE": "\u26aa",
+                 "REJECTED": "\u26d4", "UNKNOWN COMMAND": "\u2753"}
+
+
+def render_event_feed():
+    """Chronological event monitor, newest first. Reads only."""
+    st.subheader("Event monitor (last %d)" % len(st.session_state.events))
+    if not st.session_state.events:
+        st.write("No commands yet. Type or speak a command below.")
+        return
+    for event in reversed(st.session_state.events):
+        icon = _STATUS_ICONS.get(event["status"], "")
+        st.write("%s [%s] %s" % (icon, event["status"], event["time"]))
+        st.text("Heard: '%s'" % event["transcript"])
+        st.text("Piece: '%s' -> %s (%s)" % (
+            event["piece"], event["intent"], event["target"]))
+        st.text("Confidence %.2f via %s. %s" % (
+            event["confidence"], event["source"], event["message"]))
 
 
 def main():
@@ -215,6 +281,7 @@ def main():
     render_voice_tally()
 
     render_house(st.session_state.home)
+    render_event_feed()
 
     # Voice input plus typed fallback.
     st.subheader("Give a command")
@@ -226,6 +293,7 @@ def main():
     if col_reset.button("Reset house"):
         st.session_state.home = SmartHome()
         st.session_state.history = []
+        st.session_state.events = []
         st.session_state.last_result = None
         st.rerun()
 
