@@ -10,8 +10,8 @@ After the first run it works fully offline (except the optional Groq fallback).
 2. Local Whisper model `tiny.en` (~75 MB) turns audio into English text.
    It downloads once on the first run, then stays cached and works offline.
 3. A tiny scikit-learn classifier (trained in code, no external data)
-   turns text into an intent plus confidence. Below 0.60 confidence,
-   plain keyword rules decide instead, so weak guesses never trigger actions.
+    turns text into an intent plus confidence. Below 0.65 confidence,
+    plain keyword rules decide instead, so weak guesses never trigger actions.
 4. The house state updates and the page redraws.
 
 ## Run steps (Windows, Python 3.10+, normal laptop mic, CPU only)
@@ -42,4 +42,21 @@ Typed commands first (no mic needed), then voice (see app sidebar help).
 Try: "turn on the kitchen light", "open the door", "lock the door",
 "turn off all lights", "what is the status of the house", "make coffee"
 (unknown command test). The UI shows the transcript, the intent, and the
-confidence so the 0.60 threshold can be tuned in `command_parser.py`.
+confidence so the 0.65 threshold can be tuned in `command_parser.py`.
+
+## Multi-command sentences (new)
+
+One recording or typed line can hold up to 4 commands, run in spoken
+order. Each is judged separately; a refused piece never stops the rest.
+Keep recordings under 15 seconds and speak steadily (no long pauses).
+
+- "turn on the kitchen light and open the window"
+- "turn off the oven, then lock the door"
+- "turn on the kitchen and bedroom lights" (shared words are filled in)
+- "switch on the air conditioner and the bedroom light, then tell me the status"
+- Conflicts and ambiguity are refused with a reason, e.g.
+  "open the door and lock the door" (second refused: door is open),
+  "turn on the kitchen light and the bedroom" (ambiguous piece rejected).
+- 5 commands in one sentence: only the first 4 run. Example:
+  "turn on the oven, turn on the air conditioner, turn on the kitchen
+  light, turn on the water heater, and open the window".

@@ -8,10 +8,12 @@ Optional fallback: Groq Whisper API, only when the user enables it.
 import os
 
 # Hint words bias Whisper toward our home vocabulary.
+# Connector words (and, then, ...) are included so multi-command
+# sentences keep the words the splitter needs.
 INITIAL_PROMPT = (
     "kitchen bathroom bedroom light door window oven stove "
     "water heater boiler air conditioner aircon turn on turn off "
-    "open close lock unlock status"
+    "open close lock unlock status and then also plus after that"
 )
 
 

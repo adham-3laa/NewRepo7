@@ -13,15 +13,25 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 
-from training_data import generate_test_data, generate_training_data
+from training_data import (
+    generate_test_data,
+    generate_training_data,
+    get_single_test_v2,
+)
 
 MODEL_FILE = os.path.join(os.path.dirname(__file__), "intent_model.joblib")
 
 
 def build_classifier():
-    """Create the untrained sklearn pipeline."""
+    """Create the untrained sklearn pipeline.
+
+    C=10 means less smoothing, so confidences are sharper.
+    class_weight balanced stops rare intents (status, everything_off)
+    from being drowned out by frequent ones.
+    """
     vectorizer = TfidfVectorizer(ngram_range=(1, 2), lowercase=True)
-    classifier = LogisticRegression(max_iter=1000)
+    classifier = LogisticRegression(max_iter=1000, C=10,
+                                    class_weight="balanced")
     return make_pipeline(vectorizer, classifier)
 
 
@@ -78,3 +88,18 @@ def evaluate_accuracy(model=None):
         details.append((sentence, expected, predicted, confidence))
     accuracy = correct / len(rows) if rows else 0.0
     return (accuracy, details)
+
+
+def evaluate_single_v2(model=None):
+    """Score the classifier on the new hand-written singles. Group (a)."""
+    if model is None:
+        model = load_or_train()
+    rows = get_single_test_v2()
+    correct = 0
+    details = []
+    for sentence, expected in rows:
+        predicted, confidence = predict_intent(model, sentence)
+        if predicted == expected:
+            correct += 1
+        details.append((sentence, expected, predicted, confidence))
+    return (correct / len(rows) if rows else 0.0, details)

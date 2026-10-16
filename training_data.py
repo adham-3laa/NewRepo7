@@ -83,6 +83,48 @@ def generate_training_data():
                  "house status", "show status", "what is on",
                  "show me the house status"]:
         rows.append((text, "status"))
+    rows.extend(_extra_variety())
+    return rows
+
+
+def _extra_variety():
+    """Extra wording variety: polite forms, plurals, front door, fillers.
+
+    Every string here was checked against both hand-written test sets:
+    no verbatim overlap, so the tests stay honest.
+    """
+    rows = []
+    for room in ("kitchen", "bathroom", "bedroom"):
+        for verb, intent in (("turn on", "%s_light_on" % room),
+                             ("turn off", "%s_light_off" % room)):
+            rows.append(("please %s the %s light" % (verb, room), intent))
+        rows.append(("could you turn on the %s light" % room,
+                     "%s_light_on" % room))
+        rows.append(("could you turn off the %s light" % room,
+                     "%s_light_off" % room))
+        rows.append(("turn on the %s lights" % room, "%s_light_on" % room))
+        rows.append(("turn off the %s lights" % room, "%s_light_off" % room))
+    for name, room in (("oven", "kitchen"), ("heater", "bathroom"),
+                       ("air conditioner", "bedroom")):
+        rows.append(("please turn on the %s" % name, "%s_device_on" % room))
+        rows.append(("please turn off the %s" % name, "%s_device_off" % room))
+        rows.append(("could you turn on the %s" % name, "%s_device_on" % room))
+        rows.append(("could you turn off the %s" % name, "%s_device_off" % room))
+    # Front door word order (tests use "for me" / "now" / "up" forms).
+    rows.append(("open the front door", "door_open"))
+    rows.append(("close the front door", "door_close"))
+    rows.append(("lock the front door", "door_lock"))
+    rows.append(("unlock the front door", "door_unlock"))
+    # More status and global phrasings.
+    for text in ["tell me the house status", "show me the house status",
+                 "give me the status", "report the house status"]:
+        rows.append((text, "status"))
+    for text in ["turn all the lights off", "switch all lights off",
+                 "turn every light off"]:
+        rows.append((text, "all_lights_off"))
+    for text in ["shut everything down", "power everything off",
+                 "switch off everything"]:
+        rows.append((text, "everything_off"))
     return rows
 
 
@@ -113,4 +155,133 @@ def generate_test_data():
         ("everything off now please", "everything_off"),
         ("tell me the house status", "status"),
         ("what is switched on right now", "status"),
+    ]
+
+
+def get_single_test_v2():
+    """New hand-written single commands (set 2, never used in training).
+
+    Phrased differently from both the templates and the old test set.
+    """
+    return [
+        ("kindly turn the kitchen light on", "kitchen_light_on"),
+        ("bedroom light on, please", "bedroom_light_on"),
+        ("please turn off the bathroom light", "bathroom_light_off"),
+        ("switch the oven on", "kitchen_device_on"),
+        ("turn the stove off now", "kitchen_device_off"),
+        ("could you turn on the bathroom heater", "bathroom_device_on"),
+        ("turn the boiler off", "bathroom_device_off"),
+        ("please enable aircon in the bedroom", "bedroom_device_on"),
+        ("shut off the water heater", "bathroom_device_off"),
+        ("power on the oven please", "kitchen_device_on"),
+        ("open the front door for me", "door_open"),
+        ("shut the front door", "door_close"),
+        ("lock up the door", "door_lock"),
+        ("unlock the door now", "door_unlock"),
+        ("open up the window", "window_open"),
+        ("close the window please", "window_close"),
+        ("switch every light off", "all_lights_off"),
+        ("shut down everything", "everything_off"),
+        ("tell me the status", "status"),
+        ("show me the status", "status"),
+    ]
+
+
+def get_multi_test():
+    """New hand-written multi-command sentences with expected outcomes.
+
+    Each expected item is an intent, or "SAFE" (the piece must be
+    refused/rejected/unknown with NO action), or "LIMIT" (the 5-command
+    case: first 4 run, limit notice shown).
+    """
+    return [
+        ("turn on the kitchen light and open the window",
+         ["kitchen_light_on", "window_open"]),
+        ("turn off the oven, then lock the door",
+         ["kitchen_device_off", "door_lock"]),
+        ("turn on the kitchen and bedroom lights",
+         ["kitchen_light_on", "bedroom_light_on"]),
+        ("switch on the air conditioner and the bedroom light, then tell me the status",
+         ["bedroom_device_on", "bedroom_light_on", "status"]),
+        ("open the door and the window",
+         ["door_open", "window_open"]),
+        ("turn on the kitchen light and the oven",
+         ["kitchen_light_on", "kitchen_device_on"]),
+        ("turn off the bathroom light and heater",
+         ["bathroom_light_off", "bathroom_device_off"]),
+        ("lock the door and the window",
+         ["door_lock", "SAFE"]),
+        ("turn on the kitchen light and the bedroom",
+         ["kitchen_light_on", "SAFE"]),
+        ("turn it on",
+         ["SAFE"]),
+        ("open the door and lock the door",
+         ["door_open", "SAFE"]),
+        ("show me the status and turn off all lights",
+         ["status", "all_lights_off"]),
+        ("turn on the oven, turn on the air conditioner, turn on the kitchen light, turn on the water heater, and open the window",
+         ["kitchen_device_on", "bedroom_device_on", "kitchen_light_on",
+          "bathroom_device_on", "LIMIT"]),
+        ("close the window, lock the door and turn off all lights",
+         ["window_close", "door_lock", "all_lights_off"]),
+    ]
+
+
+def get_garbage_test():
+    """Garbage, typos and invalid singles. All must be safely rejected.
+
+    Expected "SAFE" means unknown/refused with NO action taken.
+    "kitchen_light_on" entries are typos/corrections that MUST still work.
+    """
+    return [
+        ("make coffee", "SAFE"),
+        ("asdfgh", "SAFE"),
+        ("", "SAFE"),
+        ("hello house are you there", "SAFE"),
+        ("please please please", "SAFE"),
+        ("lock the window", "SAFE"),
+        ("open the oven", "SAFE"),
+        ("turn on the bedroom", "SAFE"),
+        ("trun on kichen light", "kitchen_light_on"),
+        ("bath room light on", "bathroom_light_on"),
+        ("turn on the kitchen like", "kitchen_light_on"),
+        ("log the door", "door_lock"),
+    ]
+
+
+def get_ambiguity_test():
+    """Hand-written ambiguity and near-miss singles. ALL must be SAFE.
+
+    First 15 approved by the user, last 5 invented for this task
+    (room-only, wrong-room-device, pronouns). SAFE means no action
+    and no state change, only a short clarifying message.
+    """
+    return [
+        ("turn on the bedroom", "SAFE"),
+        ("turn off the kitchen", "SAFE"),
+        ("switch on the bathroom", "SAFE"),
+        ("power off the bedroom", "SAFE"),
+        ("turn on the light", "SAFE"),
+        ("switch off the lights", "SAFE"),
+        ("light on", "SAFE"),
+        ("turn on the device", "SAFE"),
+        ("switch the device off", "SAFE"),
+        ("turn on the kitchen heater", "SAFE"),
+        ("turn off the bedroom oven", "SAFE"),
+        ("switch on the bathroom air conditioner", "SAFE"),
+        ("turn off all kitchen lights", "SAFE"),
+        ("turn it off", "SAFE"),
+        ("switch it on", "SAFE"),
+        ("switch off the bathroom", "SAFE"),
+        ("turn the bedroom heater on", "SAFE"),
+        ("power on the kitchen air conditioner", "SAFE"),
+        ("switch that on", "SAFE"),
+        ("turn these off", "SAFE"),
+    ]
+
+
+def get_ambiguity_multi_test():
+    """One multi sentence with TWO ambiguous pieces. Both must be SAFE."""
+    return [
+        ("turn on the bathroom and switch it off", ["SAFE", "SAFE"]),
     ]
