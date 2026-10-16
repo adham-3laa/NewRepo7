@@ -1,0 +1,6 @@
+streamlit==1.66.0
+faster-whisper==1.2.1
+scikit-learn==1.9.1
+joblib==1.6.0
+groq==1.7.0
+av==18.1.0
