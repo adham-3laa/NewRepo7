@@ -18,10 +18,16 @@ from multi_command import (
 from speech import (
     groq_key_available,
     load_local_model,
+    local_model_name,
+    local_model_size_text,
     transcribe_groq,
     transcribe_local,
 )
-from training_data import get_garbage_test, get_single_test_v2
+from training_data import (
+    get_garbage_test,
+    get_single_test_v2,
+    get_stt_variant_test,
+)
 
 
 @st.cache_resource
@@ -32,9 +38,11 @@ def get_intent_model():
 
 @st.cache_resource
 def get_whisper_model():
-    """Load local tiny.en once. First run downloads ~75 MB."""
-    with st.spinner("Loading local voice model tiny.en (first run downloads "
-                     "about 75 MB, then works offline)..."):
+    """Load the local Whisper model once. First run downloads it."""
+    name = local_model_name()
+    with st.spinner("Loading local voice model %s (first run downloads %s, "
+                     "then works offline)..." % (name,
+                                                 local_model_size_text(name))):
         return load_local_model()
 
 
@@ -91,7 +99,8 @@ def handle_text(text, model, kind="typed"):
     """Parse (possibly multi-command) text, run it, store results."""
     if not (text or "").strip():
         st.session_state.last_result = {
-            "transcript": "", "limited": False, "kind": kind,
+            "transcript": "", "corrected": "", "corrections": [],
+            "limited": False, "kind": kind,
             "voted": False, "outcomes": [{
                 "piece": "", "intent": "unknown", "confidence": 0.0,
                 "source": "unknown", "corrections": [],
@@ -101,7 +110,10 @@ def handle_text(text, model, kind="typed"):
     parsed = parse_multi(text, model)
     outcomes = execute_multi(st.session_state.home, parsed)
     st.session_state.last_result = {
-        "transcript": parsed["transcript"], "limited": parsed["limited"],
+        "transcript": parsed["transcript"],
+        "corrected": parsed.get("corrected", parsed["transcript"]),
+        "corrections": parsed.get("corrections", []),
+        "limited": parsed["limited"],
         "kind": kind, "voted": False, "outcomes": outcomes}
     counts = {}
     for outcome in outcomes:
@@ -147,6 +159,12 @@ def render_results():
         return
     st.subheader("Result")
     st.write("Heard: '%s'" % result["transcript"])
+    if result.get("corrected") and result["corrected"] != result["transcript"]:
+        st.write("Interpreted: '%s'" % result["corrected"])
+    if result.get("corrections"):
+        fixes = ", ".join("%s->%s" % (old, new)
+                          for old, new in result["corrections"])
+        st.write("Speech corrections: %s" % fixes)
     for number, outcome in enumerate(result["outcomes"], start=1):
         icon = _TAG_ICONS.get(outcome["tag"], "")
         st.write("%d. '%s' -> %s (confidence %.2f, via %s): %s %s" % (
@@ -215,6 +233,8 @@ def render_accuracy(model):
     st.sidebar.write("(b) Singles, end to end: %.0f%%" % (acc_b * 100))
     acc_d, _ = evaluate_with_rules(model, get_garbage_test())
     st.sidebar.write("(d) Garbage safely rejected: %.0f%%" % (acc_d * 100))
+    acc_e, _ = evaluate_with_rules(model, get_stt_variant_test())
+    st.sidebar.write("(e) STT variants end to end: %.0f%%" % (acc_e * 100))
     cmd_acc, sent_acc, _ = score_multi_test(model)
     st.sidebar.write("(c) Multi per-command: %.0f%%, per-sentence: %.0f%%" %
                      (cmd_acc * 100, sent_acc * 100))
@@ -267,16 +287,22 @@ def main():
     st.sidebar.write("Confidence threshold: %.2f" % CONFIDENCE_THRESHOLD)
     groq_status = "SET" if groq_key_available() else "NOT SET"
     st.sidebar.write("Groq key status: %s (never shown)" % groq_status)
+    local_name = local_model_name()
     with st.sidebar.expander("Setup help"):
         st.write("1. Allow the microphone in the browser address bar.")
-        st.write("2. First run needs internet once to download tiny.en (~75 MB).")
+        st.write("2. First run needs internet once to download %s "
+                 "(%s)." % (local_name, local_model_size_text(local_name)))
         st.write("3. After that, Local Whisper works fully offline.")
-        st.write("4. Groq needs GROQ_API_KEY set, e.g. "
+        st.write("4. Model can be changed before restarting: "
+                 "`setx WHISPER_MODEL base.en` (~145 MB) or `small.en` "
+                 "(~480 MB) for more accuracy; tiny.en (current) is "
+                 "the fastest.")
+        st.write("5. Groq needs GROQ_API_KEY set, e.g. "
                  "`setx GROQ_API_KEY your_key`, then restart.")
-        st.write("5. Speak close to the mic, in a quiet room. Single "
+        st.write("6. Speak close to the mic, in a quiet room. Single "
                  "commands: 3-5 seconds. Up to %d commands: steady "
                  "speech, max 15 seconds, no long pauses." % MAX_COMMANDS)
-    if st.sidebar.button("Check accuracy (groups a-d)"):
+    if st.sidebar.button("Check accuracy (groups a-e)"):
         render_accuracy(model)
     render_voice_tally()
 

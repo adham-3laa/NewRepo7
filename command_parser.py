@@ -1,8 +1,11 @@
 """Map English text to a house action.
 
-Two layers:
-1. The scikit-learn classifier predicts (intent, confidence).
-2. If confidence is below CONFIDENCE_THRESHOLD, plain keyword
+Three layers:
+1. apply_corrections repairs likely speech-recognition mistakes in
+   known room/device/action words. It only rewrites tokens that
+   plausibly match the command vocabulary, never unrelated text.
+2. The scikit-learn classifier predicts (intent, confidence).
+3. If confidence is below CONFIDENCE_THRESHOLD, plain keyword
    rules plus difflib fuzzy matching decide instead, so a weak
    guess never triggers a wrong action.
 """
@@ -26,6 +29,74 @@ _BATHROOM_DEVICES = ("water heater", "heater", "boiler", "bathroom device")
 _BEDROOM_DEVICES = ("air conditioner", "air conditioning", "ac",
                     "aircon", "conditioner", "bedroom device")
 
+# ---- transcription normalization vocabulary ----------------------
+# Fuzzy matching may only rewrite a garbled token TO one of these
+# words, so a stray sentence can never be turned into an action.
+_FUZZY_TARGETS = (
+    "kitchen", "bathroom", "bedroom",
+    "light", "door", "window",
+    "oven", "stove", "water", "heater", "boiler", "aircon",
+    "conditioner", "conditioning",
+    "status", "turn", "open", "close", "shut", "lock", "unlock",
+    "switch", "power", "enable", "disable", "start", "stop",
+    "everything", "device", "front", "house",
+)
+
+# Valid command words (plus ordinary filler) that are never rewritten.
+_KNOWN_TOKENS = frozenset(_FUZZY_TARGETS + (
+    "all", "every", "and", "then", "also", "plus", "after", "that",
+    "the", "a", "an", "in", "at", "of", "to", "for", "me", "my",
+    "is", "it", "what", "whats", "show", "tell", "give", "report",
+    "please", "now", "could", "would", "should", "can", "you", "i",
+    "we", "lets", "let", "want", "need", "kindly", "just", "only",
+    "on", "off", "up", "down", "ac", "air", "lights", "doors",
+    "windows", "hello", "okay", "ok", "sorry", "thanks", "thank",
+    "am", "are", "there", "here", "how", "who", "when", "where",
+    "why", "get", "make", "statuses",
+))
+
+# Ordinary English words that sit one letter away from command
+# vocabulary. They must never be "corrected", or a harmless
+# sentence could silently become an action.
+_PROTECTED_WORDS = frozenset((
+    "right", "left", "night", "might", "fight", "tight", "sight",
+    "eight", "white", "write", "bright", "flight", "alight",
+    "slight", "plight", "blight", "like",
+    "burn", "torn", "burnt", "turf", "term",
+    "over", "even", "look", "clock", "block", "flock",
+    "poor", "four", "hour", "doer", "moor",
+    "stone", "store", "stole", "stave", "statue", "statute",
+    "stature", "stratus", "star", "stoop", "shout",
+    "stitch", "twitch", "witch", "closet", "woven",
+))
+
+# Explicit single-token aliases, applied before any fuzzy matching.
+_TOKEN_ALIASES = {
+    "bathrom": "bathroom", "bathrum": "bathroom", "bathroon": "bathroom",
+    "bedrom": "bedroom", "bedroon": "bedroom", "bedrum": "bedroom",
+    "badroom": "bedroom",  # one edit from bedroom, two from bathroom
+    "kichen": "kitchen", "kitchin": "kitchen", "kitcen": "kitchen",
+    "kitchan": "kitchen", "kitchhen": "kitchen",
+    "ovem": "oven", "ovin": "oven",
+    "windo": "window", "windoe": "window", "windon": "window",
+    "lite": "light", "ligt": "light",
+    "dor": "door",
+    "trun": "turn", "tun": "turn", "tern": "turn", "turm": "turn",
+    "heather": "heater", "watter": "water",
+    "statis": "status",
+}
+
+# Explicit phrase aliases (word-boundary padded replacements).
+_PHRASE_ALIASES = (
+    ("bath room", "bathroom"),
+    ("bed room", "bedroom"),
+    ("air con", "aircon"),
+    ("waterheater", "water heater"),
+    ("frontdoor", "front door"),
+    ("log the door", "lock the door"),
+    ("block the door", "lock the door"),
+)
+
 
 def normalize(text):
     """Lowercase, remove punctuation, collapse spaces."""
@@ -35,25 +106,53 @@ def normalize(text):
     return cleaned
 
 
-def apply_corrections(text):
-    """Fix common tiny.en mishearings. Returns (new_text, [(old, new)]).
+def _fix_token(token):
+    """Repair one garbled token, or return it unchanged.
 
-    Only the approved list below. Each fires only in a narrow pattern
-    with exactly one interpretation. There is deliberately NO
-    open->oven correction: a wrong guess must never turn on heating.
+    Conservative order: known words and their plurals are never
+    touched; explicit aliases win; protected ordinary words are
+    skipped; then short tokens and common inflections are skipped
+    (they are almost always real words); finally fuzzy matching
+    runs only when exactly ONE vocabulary word is close enough.
+    """
+    if token in _KNOWN_TOKENS:
+        return token
+    if token.endswith("s") and token[:-1] in _KNOWN_TOKENS:
+        return token
+    alias = _TOKEN_ALIASES.get(token)
+    if alias is not None:
+        return alias
+    if token in _PROTECTED_WORDS:
+        return token
+    if len(token) < 5:
+        return token
+    if token.endswith(("ed", "ing", "er", "ly")):
+        return token
+    matches = difflib.get_close_matches(token, _FUZZY_TARGETS, n=2,
+                                        cutoff=0.85)
+    if len(matches) == 1:
+        return matches[0]
+    return token
+
+
+def apply_corrections(text):
+    """Fix likely speech-recognition mistakes. Returns (new_text, [(old, new)]).
+
+    Runs before the classifier and before multi-command splitting.
+    Explicit aliases cover the known mishearings; the token pass adds
+    conservative fuzzy repair for the rest. Only words that plausibly
+    match command vocabulary are rewritten, and there is deliberately
+    NO open->oven correction: a wrong guess must never turn on heating.
+    The function is idempotent: a second pass reports no changes.
     """
     changes = []
-    fixed = " %s " % text  # Padded so word-boundary patterns are simple.
-    pairs = [
-        (" bath room ", " bathroom "),
-        (" air con ", " aircon "),  # "air conditioning" never matches this.
-        (" log the door ", " lock the door "),
-        (" block the door ", " lock the door "),
-    ]
-    for old, new in pairs:
-        if old in fixed:
-            fixed = fixed.replace(old, new)
-            changes.append((old.strip(), new.strip()))
+    fixed = normalize(text)
+    padded = " %s " % fixed  # Padded so word-boundary patterns are simple.
+    for old, new in _PHRASE_ALIASES:
+        if " %s " % old in padded:
+            padded = padded.replace(" %s " % old, " %s " % new)
+            changes.append((old, new))
+    fixed = padded.strip()
     # "like" -> "light" only after turn/switch/power + on/off + room name.
     like_pattern = (r"\b(turn|switch|power)\s+(on|off)\s+(the\s+)?"
                     r"(kitchen|bathroom|bedroom)\s+like\b")
@@ -69,7 +168,22 @@ def apply_corrections(text):
     if count:
         fixed = fixed2
         changes.append(("a c", "ac"))
-    return (fixed.strip(), changes)
+    # "air condition" alone (not conditioner/conditioning/conditioned).
+    fixed2, count = re.subn(r"\bair condition\b(?!er|ing|ed)",
+                            "air conditioner", fixed)
+    if count:
+        fixed = fixed2
+        changes.append(("air condition", "air conditioner"))
+    # Token pass: repair individual garbled words.
+    tokens = fixed.split()
+    repaired = [_fix_token(token) for token in tokens]
+    if repaired != tokens:
+        for old, new in zip(tokens, repaired):
+            if old != new:
+                changes.append((old, new))
+        fixed = " ".join(repaired)
+    # One record per distinct change, in first-seen order.
+    return (fixed, list(dict.fromkeys(changes)))
 
 
 def _fuzzy_contains(text, *words, cutoff=0.8):

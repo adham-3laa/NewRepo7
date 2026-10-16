@@ -1,8 +1,9 @@
 """Handle MORE THAN ONE command in a single sentence.
 
-Pipeline: expand shared words -> split on connectors -> complete
-each piece (verb inheritance, exactly one interpretation or reject) ->
-parse each piece with the existing parse_command -> run in order.
+Pipeline: normalize speech mistakes ONCE on the whole transcript ->
+expand shared words -> split on connectors -> complete each piece
+(verb inheritance, exactly one interpretation or reject) -> parse
+each piece with the existing parse_command -> run in order.
 One refused piece never stops the others. Guessing is never allowed.
 """
 
@@ -152,17 +153,29 @@ def complete_piece(piece, prev_verb):
 def parse_multi(text, model):
     """Split text into pieces and parse each. Returns a result dict.
 
-    Keys: transcript, pieces (list of piece dicts), limited (True when
+    Keys: transcript (what was heard, normalized), corrected (the
+    transcription after speech-mistake repair), corrections (the
+    applied fixes), pieces (list of piece dicts), limited (True when
     more than MAX_COMMANDS were found and extras were dropped).
     """
     transcript = normalize(text)
     if not transcript:
         empty = parse_command("", model)
-        return {"transcript": "", "pieces": [{
-            "piece": "", "full": "", "intent": "unknown",
-            "confidence": 0.0, "source": "unknown", "corrections": [],
-            "note": None, "error": None}], "limited": False}
-    pieces = split_pieces(text)  # Raw text: commas must survive to here.
+        return {"transcript": "", "corrected": "", "corrections": [],
+                "pieces": [{
+                    "piece": "", "full": "", "intent": "unknown",
+                    "confidence": 0.0, "source": "unknown", "corrections": [],
+                    "note": None, "error": None}], "limited": False}
+    # One normalization pass for the whole sentence, before splitting
+    # and before shared-word expansion, so both see the corrected
+    # rooms/devices. Commas become " and " first, so separators and
+    # punctuation survive exactly as before.
+    lowered = (text or "").lower().replace(",", " and ")
+    corrected, corrections = apply_corrections(normalize(lowered))
+    # "heater, and open" becomes "heater and and open"; collapse the
+    # duplicate connector for display (splitting drops empty pieces).
+    corrected = re.sub(r"\band(?:\s+and\b)+", "and", corrected)
+    pieces = split_pieces(corrected)
     limited = len(pieces) > MAX_COMMANDS
     pieces = pieces[:MAX_COMMANDS]
     results = []
@@ -184,7 +197,9 @@ def parse_multi(text, model):
         parsed["error"] = None
         parsed["corrections"] = piece_corr + parsed["corrections"]
         results.append(parsed)
-    return {"transcript": transcript, "pieces": results, "limited": limited}
+    return {"transcript": transcript, "corrected": corrected,
+            "corrections": corrections, "pieces": results,
+            "limited": limited}
 
 
 def execute_intent(home, intent):

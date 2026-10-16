@@ -285,3 +285,36 @@ def get_ambiguity_multi_test():
     return [
         ("turn on the bathroom and switch it off", ["SAFE", "SAFE"]),
     ]
+
+
+def get_stt_variant_test():
+    """Speech-recognition variants: misspellings and near-miss wording.
+
+    Expected values are intents for commands that must work, or "SAFE"
+    for input that must stay rejected (protected/unrelated words).
+    Used by the accuracy panel and by test_normalization.py.
+    """
+    return [
+        ("bathrom light on", "bathroom_light_on"),
+        ("bath room light on", "bathroom_light_on"),
+        ("bedrom light off", "bedroom_light_off"),
+        ("bed room light on", "bedroom_light_on"),
+        ("badroom light on", "bedroom_light_on"),
+        ("kichen light on", "kitchen_light_on"),
+        ("kitchin light off", "kitchen_light_off"),
+        ("turn on the ovem", "kitchen_device_on"),
+        ("turn off the ovem", "kitchen_device_off"),
+        ("open the windo", "window_open"),
+        ("close the windo", "window_close"),
+        ("turn on the bedroom lite", "bedroom_light_on"),
+        ("switch off the bathroom lite", "bathroom_light_off"),
+        ("turn on the water heather", "bathroom_device_on"),
+        ("turn off the watter heater", "bathroom_device_off"),
+        ("turn on in kitchen light", "kitchen_light_on"),
+        # Protected/unrelated wording: must stay rejected.
+        ("close the closet", "SAFE"),
+        ("turn on the store light", "SAFE"),
+        ("the star light on", "SAFE"),
+        # Status queries keep working (protected words untouched).
+        ("what is switched on right now", "status"),
+    ]

@@ -9,10 +9,19 @@ After the first run it works fully offline (except the optional Groq fallback).
 1. Browser records your voice with `st.audio_input` (no PyAudio needed).
 2. Local Whisper model `tiny.en` (~75 MB) turns audio into English text.
    It downloads once on the first run, then stays cached and works offline.
-3. A tiny scikit-learn classifier (trained in code, no external data)
+   The transcription is biased with the house vocabulary (`initial_prompt`
+   plus `hotwords`) and tuned for short commands. Set
+   `WHISPER_MODEL=base.en` (~145 MB) or `small.en` (~480 MB) before
+   restarting for a larger model. Benchmark on short commands: base.en
+   matched tiny.en on clean and lightly noised clips but was ~2x slower,
+   so tiny.en stays the default.
+3. A speech-mistake normalization pass repairs likely transcription errors
+   in known room/device/action words before anything else runs (see
+   "Tolerant command understanding" below).
+4. A tiny scikit-learn classifier (trained in code, no external data)
     turns text into an intent plus confidence. Below 0.65 confidence,
     plain keyword rules decide instead, so weak guesses never trigger actions.
-4. The house state updates and the page redraws.
+5. The house state updates and the page redraws.
 
 ## Run steps (Windows, Python 3.10+, normal laptop mic, CPU only)
 
@@ -52,7 +61,7 @@ After the first run it works fully offline (except the optional Groq fallback).
   with time, transcript, piece, intent, target, confidence and one of
   SUCCESS / ALREADY IN STATE / REJECTED / UNKNOWN COMMAND.
 - Sidebar keeps engine choice, threshold display, accuracy checks
-  (groups a-d), setup help and the session-only voice log
+  (groups a-e), setup help and the session-only voice log
   (Correct/Wrong buttons, nothing written to disk).
 
 ## Test order
@@ -62,6 +71,25 @@ Try: "turn on the kitchen light", "open the door", "lock the door",
 "turn off all lights", "what is the status of the house", "make coffee"
 (unknown command test). The UI shows the transcript, the intent, and the
 confidence so the 0.65 threshold can be tuned in `command_parser.py`.
+
+## Tolerant command understanding (new)
+
+Speech-recognition mistakes in known vocabulary are repaired before
+intent classification and before multi-command splitting, for voice
+and typed input alike. The result panel shows `Heard:` (original) and
+`Interpreted:` (after repairs) plus the applied corrections.
+
+- Room variants: `bathrom`, `bath room`, `bathrum`, `bedrom`,
+  `bed room`, `badroom` (one edit from bedroom), `kichen`, `kitchin` ...
+- Device/object variants: `ovem`, `windo`, `windoe`, `lite`,
+  `water heather`, `watter heater`, `air condition` ...
+- Action variants: `trun on`, `log the door`, `turn on the kitchen like`
+- Missing/extra short words are tolerated (`turn on in kitchen light`).
+- Repairs are conservative: explicit aliases first, then difflib fuzzy
+  matching only when a single vocabulary word is close enough. Protected
+  ordinary words (`right`, `store`, `closet`, `statue`, ...) and
+  unrelated text (`make coffee`) are never rewritten. A typo that still
+  matches two rooms/devices stays refused as ambiguous.
 
 ## Multi-command sentences (new)
 
