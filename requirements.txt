@@ -1,6 +1,8 @@
 streamlit==1.66.0
+streamlit-webrtc==0.78.1
+webrtcvad-wheels==2.0.14.post1
 faster-whisper==1.2.1
 scikit-learn==1.9.1
 joblib==1.6.0
 groq==1.7.0
-av==18.1.0
+av==17.1.0
